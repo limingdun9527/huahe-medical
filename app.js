@@ -182,6 +182,8 @@ const journeySteps = [
   }
 ];
 
+const INQUIRY_ENDPOINT = "https://api.22221111.cn/api/inquiries";
+const CONSENT_VERSION = "2026-11-12";
 const DIRECT_CONTACT = {
   whatsapp: "",
   phone: "",
@@ -572,18 +574,11 @@ document.getElementById("apptMessage").addEventListener("input", (event) => {
   delete event.currentTarget.dataset.autofilled;
 });
 
-function createReference() {
-  const now = new Date();
-  const date = [String(now.getFullYear()).slice(-2), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("");
-  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `HH-${date}-${suffix}`;
-}
-
 function buildSummary() {
   if (!lastRequest) return "";
   const labels = currentLang === "zh"
-    ? { title: "华和国际医疗｜国际患者就医咨询", reference: "咨询编号", name: "姓名", country: "国家/地区", channel: "沟通方式", contact: "联系方式", department: "意向科室", message: "咨询问题", none: "未填写" }
-    : { title: "Huahe International Medical | Patient Inquiry", reference: "Reference", name: "Name", country: "Country/region", channel: "Contact method", contact: "Contact details", department: "Specialty", message: "Question", none: "Not provided" };
+    ? { title: "华和国际医疗｜咨询提交回执", reference: "咨询编号", name: "姓名", country: "国家/地区", channel: "沟通方式", contact: "联系方式", department: "意向科室", message: "咨询问题", none: "未填写" }
+    : { title: "Huahe International Medical | Inquiry Receipt", reference: "Reference", name: "Name", country: "Country/region", channel: "Contact method", contact: "Contact details", department: "Specialty", message: "Question", none: "Not provided" };
   const departmentSelect = document.getElementById("apptDepartment");
   const selectedOption = Array.from(departmentSelect.options).find((option) => option.value === lastRequest.departmentValue);
   const departmentName = selectedOption ? selectedOption.textContent : lastRequest.department;
@@ -595,8 +590,10 @@ function renderRequestSummary() {
   document.getElementById("requestSummary").textContent = buildSummary();
 }
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (form.dataset.submitting === "true") return;
+
   const keys = Object.keys(fieldMap);
   const invalidKeys = keys.filter((key) => !validateField(key));
   if (invalidKeys.length) {
@@ -607,10 +604,9 @@ form.addEventListener("submit", (event) => {
     fieldMap[invalidKeys[0]].input.focus({ preventScroll: false });
     return;
   }
-  formErrorSummary.hidden = true;
+
   const departmentSelect = document.getElementById("apptDepartment");
-  lastRequest = {
-    reference: createReference(),
+  const pendingRequest = {
     name: document.getElementById("apptName").value.trim(),
     country: document.getElementById("apptCountry").value.trim(),
     contact: document.getElementById("apptContact").value.trim(),
@@ -619,11 +615,56 @@ form.addEventListener("submit", (event) => {
     departmentValue: departmentSelect.value,
     message: document.getElementById("apptMessage").value.trim()
   };
-  renderRequestSummary();
-  formFields.hidden = true;
-  formSuccess.hidden = false;
-  document.getElementById("copyStatus").textContent = "";
-  formSuccess.focus({ preventScroll: false });
+  const sourceParams = new URLSearchParams(window.location.search);
+  const source = sourceParams.get("utm_source") || sourceParams.get("source") || document.referrer || "direct";
+  const submitButton = form.querySelector(".form-submit");
+  const submitLabel = submitButton.querySelector("span");
+  const defaultLabel = submitLabel.textContent;
+
+  form.dataset.submitting = "true";
+  submitButton.disabled = true;
+  submitLabel.textContent = currentLang === "zh" ? "正在提交…" : "Sending…";
+  formErrorSummary.hidden = true;
+
+  try {
+    const response = await fetch(INQUIRY_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({
+        ...pendingRequest,
+        language: currentLang,
+        consent: true,
+        consent_version: CONSENT_VERSION,
+        page_url: window.location.href.split("#")[0],
+        source,
+        website: document.getElementById("apptWebsite").value
+      })
+    });
+    let result = {};
+    try {
+      result = await response.json();
+    } catch (error) {
+      result = {};
+    }
+    if (!response.ok || !result.reference) throw new Error(`HTTP ${response.status}`);
+
+    lastRequest = { reference: result.reference, ...pendingRequest };
+    renderRequestSummary();
+    formFields.hidden = true;
+    formSuccess.hidden = false;
+    document.getElementById("copyStatus").textContent = "";
+    formSuccess.focus({ preventScroll: false });
+  } catch (error) {
+    formErrorSummary.textContent = currentLang === "zh"
+      ? "暂时无法提交。您的信息尚未发送，请稍后重试。"
+      : "We could not submit your inquiry. Your information has not been sent; please try again shortly.";
+    formErrorSummary.hidden = false;
+    formErrorSummary.scrollIntoView({ behavior: "smooth", block: "center" });
+  } finally {
+    submitButton.disabled = false;
+    submitLabel.textContent = defaultLabel;
+    delete form.dataset.submitting;
+  }
 });
 
 document.getElementById("downloadRequest").addEventListener("click", () => {
@@ -637,7 +678,7 @@ document.getElementById("downloadRequest").addEventListener("click", () => {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  document.getElementById("copyStatus").textContent = currentLang === "zh" ? "摘要已下载。" : "Summary downloaded.";
+  document.getElementById("copyStatus").textContent = currentLang === "zh" ? "回执已下载。" : "Receipt downloaded.";
 });
 
 document.getElementById("copyRequest").addEventListener("click", async () => {
@@ -655,14 +696,7 @@ document.getElementById("copyRequest").addEventListener("click", async () => {
     document.execCommand("copy");
     textarea.remove();
   }
-  document.getElementById("copyStatus").textContent = currentLang === "zh" ? "摘要已复制。" : "Summary copied.";
-});
-
-document.getElementById("editRequest").addEventListener("click", () => {
-  formSuccess.hidden = true;
-  formFields.hidden = false;
-  document.getElementById("copyStatus").textContent = "";
-  document.getElementById("apptName").focus();
+  document.getElementById("copyStatus").textContent = currentLang === "zh" ? "回执已复制。" : "Receipt copied.";
 });
 
 document.getElementById("year").textContent = new Date().getFullYear();
