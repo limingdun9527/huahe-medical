@@ -631,7 +631,12 @@ form.addEventListener("submit", async (event) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify({
-        ...pendingRequest,
+        name: pendingRequest.name,
+        country: pendingRequest.country,
+        channel: pendingRequest.channel,
+        contact: pendingRequest.contact,
+        department: pendingRequest.departmentValue,
+        message: pendingRequest.message,
         language: currentLang,
         consent: true,
         consent_version: CONSENT_VERSION,
